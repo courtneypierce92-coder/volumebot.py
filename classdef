@@ -1,0 +1,41 @@
+class MarketMaker:
+    def __init__(self, token_address: str, spread: float, max_slippage: float):
+        self.token_address = token_address
+        self.spread = spread
+        self.max_slippage = max_slippage
+        self.running = False
+        self.last_buy_price = 0.0
+        self.last_sell_price = 0.0
+        self.buy_orders = []
+        self.sell_orders = []
+
+    async def start(self):
+        """Start market making for the token"""
+        self.running = True
+        while self.running:
+            try:
+                await self.update_prices()
+                await self.place_orders()
+                await asyncio.sleep(30)  # Adjust frequency as needed
+            except Exception as e:
+                logger.error(f"Market making error: {e}")
+                await asyncio.sleep(60)
+
+    async def stop(self):
+        """Stop market making"""
+        self.running = False
+        # Cancel all active orders (implementation depends on DEX API)
+
+    async def update_prices(self):
+        """Update bid/ask prices based on current market"""
+        price = await get_token_price(self.token_address)
+        if price:
+            self.last_buy_price = price * (1 - self.spread)
+            self.last_sell_price = price * (1 + self.spread)
+
+    async def place_orders(self):
+        """Place buy and sell orders on DEX"""
+        # Place buy order at last_buy_price
+        # Place sell order at last_sell_price
+        # Implementation depends on specific DEX API
+        pass
