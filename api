@@ -1,0 +1,30 @@
+async def get_token_price(token_address: str) -> Optional[float]:
+    """Get current token price from Jupiter API"""
+    try:
+        url = f"{CONFIG['JUPITER_API_URL']}/price?ids={token_address}"
+        response = requests.get(url)
+        data = response.json()
+        return float(data['data'][token_address]['price'])
+    except Exception as e:
+        logger.error(f"Error fetching token price from Jupiter: {e}")
+        return None
+
+async def get_raydium_pool_info(token_address: str) -> Optional[Dict]:
+    """Get Raydium pool information for a token"""
+    try:
+        url = f"{CONFIG['RAYDIUM_API_URL']}/amm/market?baseMint={token_address}"
+        response = requests.get(url)
+        return response.json()
+    except Exception as e:
+        logger.error(f"Error fetching Raydium pool info: {e}")
+        return None
+
+async def get_birdeye_data(token_address: str) -> Optional[Dict]:
+    """Get Birdeye data for a token"""
+    try:
+        url = f"{CONFIG['BIRDEYE_API_URL']}/price?address={token_address}"
+        response = requests.get(url, headers={'x-chain': 'solana'})
+        return response.json()
+    except Exception as e:
+        logger.error(f"Error fetching Birdeye data: {e}")
+        return None
