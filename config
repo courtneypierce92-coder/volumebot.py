@@ -1,0 +1,13 @@
+# Enhanced configuration
+CONFIG = {
+    "TELEGRAM_TOKEN": os.getenv('TELEGRAM_TOKEN'),
+    "SOLANA_RPC_URL": os.getenv('SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com'),
+    "ADMIN_USER_IDS": [int(id) for id in os.getenv('ADMIN_USER_IDS', '').split(',') if id],
+    "MINIMUM_BOOST_AMOUNT": float(os.getenv('MINIMUM_BOOST_AMOUNT', 0.1)),  # SOL
+    "BOOST_COOLDOWN": int(os.getenv('BOOST_COOLDOWN', 60)),  # minutes
+    "MARKET_MAKING_SPREAD": float(os.getenv('MARKET_MAKING_SPREAD', 0.05)),  # 5% spread
+    "MAX_SLIPPAGE": float(os.getenv('MAX_SLIPPAGE', 0.1)),  # 10% max slippage
+    "JUPITER_API_URL": "https://quote-api.jup.ag/v6",
+    "RAYDIUM_API_URL": "https://api.raydium.io/v2/main/amm/market",
+    "BIRDEYE_API_URL": "https://public-api.birdeye.so/public"
+}
