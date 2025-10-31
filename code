@@ -1,0 +1,229 @@
+import os
+import logging
+import asyncio
+from typing import Optional, Dict, List, Tuple
+from datetime import datetime, timedelta
+
+import telebot
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+from solana.rpc.async_api import AsyncClient
+from solana.publickey import PublicKey
+from solana.keypair import Keypair
+from solana.transaction import Transaction
+from solana.system_program import TransferParams, transfer
+import requests
+import json
+
+# Enhanced configuration
+CONFIG = {
+    "TELEGRAM_TOKEN": os.getenv('TELEGRAM_TOKEN'),
+    "SOLANA_RPC_URL": os.getenv('SOLANA_RPC_URL', 'https://api.mainnet-beta.solana.com'),
+    "ADMIN_USER_IDS": [int(id) for id in os.getenv('ADMIN_USER_IDS', '').split(',') if id],
+    "MINIMUM_BOOST_AMOUNT": float(os.getenv('MINIMUM_BOOST_AMOUNT', 0.1)),  # SOL
+    "BOOST_COOLDOWN": int(os.getenv('BOOST_COOLDOWN', 60)),  # minutes
+    "MARKET_MAKING_SPREAD": float(os.getenv('MARKET_MAKING_SPREAD', 0.05)),  # 5% spread
+    "MAX_SLIPPAGE": float(os.getenv('MAX_SLIPPAGE', 0.1)),  # 10% max slippage
+    "JUPITER_API_URL": "https://quote-api.jup.ag/v6",
+    "RAYDIUM_API_URL": "https://api.raydium.io/v2/main/amm/market",
+    "BIRDEYE_API_URL": "https://public-api.birdeye.so/public"
+}
+
+# Initialize clients
+bot = telebot.TeleBot(CONFIG['TELEGRAM_TOKEN'])
+solana_client = AsyncClient(CONFIG['SOLANA_RPC_URL'])
+
+# Database simulation
+active_boosts: Dict[str, Dict] = {}
+user_cooldowns: Dict[int, datetime] = {}
+market_making_tasks: Dict[str, asyncio.Task] = {}
+
+class MarketMaker:
+    def __init__(self, token_address: str, spread: float, max_slippage: float):
+        self.token_address = token_address
+        self.spread = spread
+        self.max_slippage = max_slippage
+        self.running = False
+        self.last_buy_price = 0.0
+        self.last_sell_price = 0.0
+        self.buy_orders = []
+        self.sell_orders = []
+
+    async def start(self):
+        """Start market making for the token"""
+        self.running = True
+        while self.running:
+            try:
+                await self.update_prices()
+                await self.place_orders()
+                await asyncio.sleep(30)  # Adjust frequency as needed
+            except Exception as e:
+                logger.error(f"Market making error: {e}")
+                await asyncio.sleep(60)
+
+    async def stop(self):
+        """Stop market making"""
+        self.running = False
+        # Cancel all active orders (implementation depends on DEX API)
+
+    async def update_prices(self):
+        """Update bid/ask prices based on current market"""
+        price = await get_token_price(self.token_address)
+        if price:
+            self.last_buy_price = price * (1 - self.spread)
+            self.last_sell_price = price * (1 + self.spread)
+
+    async def place_orders(self):
+        """Place buy and sell orders on DEX"""
+        # Place buy order at last_buy_price
+        # Place sell order at last_sell_price
+        # Implementation depends on specific DEX API
+        pass
+
+async def get_token_price(token_address: str) -> Optional[float]:
+    """Get current token price from Jupiter API"""
+    try:
+        url = f"{CONFIG['JUPITER_API_URL']}/price?ids={token_address}"
+        response = requests.get(url)
+        data = response.json()
+        return float(data['data'][token_address]['price'])
+    except Exception as e:
+        logger.error(f"Error fetching token price from Jupiter: {e}")
+        return None
+
+async def get_raydium_pool_info(token_address: str) -> Optional[Dict]:
+    """Get Raydium pool information for a token"""
+    try:
+        url = f"{CONFIG['RAYDIUM_API_URL']}/amm/market?baseMint={token_address}"
+        response = requests.get(url)
+        return response.json()
+    except Exception as e:
+        logger.error(f"Error fetching Raydium pool info: {e}")
+        return None
+
+async def get_birdeye_data(token_address: str) -> Optional[Dict]:
+    """Get Birdeye data for a token"""
+    try:
+        url = f"{CONFIG['BIRDEYE_API_URL']}/price?address={token_address}"
+        response = requests.get(url, headers={'x-chain': 'solana'})
+        return response.json()
+    except Exception as e:
+        logger.error(f"Error fetching Birdeye data: {e}")
+        return None
+
+async def create_boost_with_mm(
+    token_address: str,
+    creator_id: int,
+    target_volume: float,
+    boost_time: datetime,
+    market_making: bool = False
+) -> str:
+    """Create a new volume boost event with optional market making"""
+    boost_id = f"boost_{datetime.now().timestamp()}"
+    
+    active_boosts[boost_id] = {
+        'id': boost_id,
+        'token_address': token_address,
+        'creator_id': creator_id,
+        'target_volume': target_volume,
+        'boost_time': boost_time,
+        'participants': [],
+        'committed_sol': 0.0,
+        'completed': False,
+        'market_making': market_making,
+        'mm_spread': CONFIG['MARKET_MAKING_SPREAD'] if market_making else None
+    }
+    
+    if market_making:
+        mm = MarketMaker(token_address, CONFIG['MARKET_MAKING_SPREAD'], CONFIG['MAX_SLIPPAGE'])
+        task = asyncio.create_task(mm.start())
+        market_making_tasks[boost_id] = task
+    
+    return boost_id
+
+@bot.message_handler(commands=['mmboost'])
+def new_mm_boost(message):
+    """Create a new boost with market making"""
+    user_id = message.from_user.id
+    
+    if user_id not in CONFIG['ADMIN_USER_IDS']:
+        bot.reply_to(
+            message,
+            "❌ Only admins can create market making boosts.",
+            parse_mode='Markdown'
+        )
+        return
+    
+    if check_user_cooldown(user_id):
+        bot.reply_to(
+            message,
+            f"⏳ You're in cooldown. Please wait {CONFIG['BOOST_COOLDOWN']} minutes between creating boosts.",
+            parse_mode='Markdown'
+        )
+        return
+    
+    msg = bot.reply_to(
+        message,
+        "Please enter the token address for the market making boost:",
+        parse_mode='Markdown'
+    )
+    bot.register_next_step_handler(msg, process_mm_token_address_step, user_id)
+
+def process_mm_token_address_step(message, user_id):
+    """Process token address for market making boost"""
+    try:
+        token_address = message.text.strip()
+        
+        if not PublicKey.is_on_curve(token_address):
+            bot.reply_to(
+                message,
+                "❌ Invalid token address. Please provide a valid Solana token address.",
+                parse_mode='Markdown'
+            )
+            return
+            
+        token_info = get_token_info(token_address)
+        if not token_info:
+            bot.reply_to(
+                message,
+                "❌ Could not fetch token information. Please check the address and try again.",
+                parse_mode='Markdown'
+            )
+            return
+            
+        msg = bot.reply_to(
+            message,
+            "Enter the target volume in SOL for this boost:",
+            parse_mode='Markdown'
+        )
+        bot.register_next_step_handler(msg, process_mm_target_volume_step, user_id, token_address)
+    except Exception as e:
+        logger.error(f"Error processing token address: {e}")
+        bot.reply_to(
+            message,
+            "❌ An error occurred. Please try again.",
+            parse_mode='Markdown'
+        )
+
+def process_mm_target_volume_step(message, user_id, token_address):
+    """Process target volume for market making boost"""
+    try:
+        target_volume = float(message.text.strip())
+        
+        if target_volume < CONFIG['MINIMUM_BOOST_AMOUNT']:
+            bot.reply_to(
+                message,
+                f"❌ Minimum boost amount is {CONFIG['MINIMUM_BOOST_AMOUNT']} SOL.",
+                parse_mode='Markdown'
+            )
+            return
+            
+        msg = bot.reply_to(
+            message,
+            "Enter the boost time (YYYY-MM-DD HH:MM in UTC):",
+            parse_mode='Markdown'
+        )
+        bot.register_next_step_handler(msg, process_mm_boost_time_step, user_id, token_address, target_volume)
+    except ValueError:
+        bot.reply_to(
+            message,
+            "❌
