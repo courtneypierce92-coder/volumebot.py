@@ -1,0 +1,29 @@
+async def create_boost_with_mm(
+    token_address: str,
+    creator_id: int,
+    target_volume: float,
+    boost_time: datetime,
+    market_making: bool = False
+) -> str:
+    """Create a new volume boost event with optional market making"""
+    boost_id = f"boost_{datetime.now().timestamp()}"
+    
+    active_boosts[boost_id] = {
+        'id': boost_id,
+        'token_address': token_address,
+        'creator_id': creator_id,
+        'target_volume': target_volume,
+        'boost_time': boost_time,
+        'participants': [],
+        'committed_sol': 0.0,
+        'completed': False,
+        'market_making': market_making,
+        'mm_spread': CONFIG['MARKET_MAKING_SPREAD'] if market_making else None
+    }
+    
+    if market_making:
+        mm = MarketMaker(token_address, CONFIG['MARKET_MAKING_SPREAD'], CONFIG['MAX_SLIPPAGE'])
+        task = asyncio.create_task(mm.start())
+        market_making_tasks[boost_id] = task
+    
+    return boost_id
